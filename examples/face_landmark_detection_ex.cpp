@@ -55,6 +55,12 @@
 #include <dlib/image_io.h>
 #include <iostream>
 
+#ifdef WIN32
+#define CLOCK_GETTIME(t)    timespec_get(t, TIME_UTC)
+#else
+#define CLOCK_GETTIME(t)    clock_gettime(CLOCK_REALTIME, t)
+#endif
+
 using namespace dlib;
 using namespace std;
 
@@ -119,9 +125,14 @@ int main(int argc, char** argv)
             std::vector<full_object_detection> shapes;
             for (unsigned long j = 0; j <nfaces; ++j)
             {
-                // output face rect to myfile
-                ostream << (i - 2) << "\t" << filename << "\t" << dets[j] << "\t";
+                struct timespec start_time, end_time;
+                CLOCK_GETTIME(&start_time);
                 full_object_detection shape = sp(img, dets[j]);
+                CLOCK_GETTIME(&end_time);
+                uint32_t duration = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+                // output face rect to myfile
+                ostream << (i - 2) << "\t" << filename << "\t" << (duration / 1000) << "\t" << dets[j] << "\t";
+
                 int n = shape.num_parts();
                 cout << "number of parts: "<< n << endl;
                 for (int i = 0; i < n; ++i)

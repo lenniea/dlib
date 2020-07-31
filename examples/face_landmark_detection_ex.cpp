@@ -73,8 +73,9 @@ using namespace std;
 
 typedef struct imageattr_t
 {
-    uint32_t duration;
+    uint32_t faceTime;
     seekrect_t faceRect;
+    uint32_t shapeTime;
     seekpoint_t leftOuter;
     seekpoint_t leftInner;
     seekpoint_t rightInner;
@@ -97,6 +98,8 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 #else
     load_png(img, filename);
 #endif
+    struct timespec start_time, end_time;
+    CLOCK_GETTIME(&start_time);
 #ifdef PYRAMID_UP
     // Make the image larger so we can detect small faces.
     pyramid_up(img);
@@ -105,6 +108,9 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
     std::vector<rectangle> dets = detector(img);
+    CLOCK_GETTIME(&end_time);
+    uint32_t faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+
     size_t nfaces = dets.size();
     cout << "Number of faces detected: " << nfaces << endl;
 
@@ -117,15 +123,15 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 
     for (unsigned long j = 0; j < nfaces; ++j)
     {
-        struct timespec start_time, end_time;
         CLOCK_GETTIME(&start_time);
         full_object_detection shape = sp(img, dets[j]);
         CLOCK_GETTIME(&end_time);
-        uint32_t duration = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+        uint32_t shapeTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
 
         // output face rect to myfile
         imageattr_t& image = imageData[j];
-        image.duration = duration / 1000;
+        image.faceTime = faceTime / 1000;
+        image.shapeTime = shapeTime / 1000;
         seekrect_t& rect = image.faceRect;
         rect.x = dets[j].left();
         rect.y = dets[j].right();
@@ -222,10 +228,11 @@ int main(int argc, char** argv)
                 for (int f = 0; f < nfaces; ++f) {
                     imageattr_t& image = visData[f];
                     seekrect_t& rect = image.faceRect;
-                    ostream << f << "\t" << filename << "\t" << image.duration << "\t" <<
-                        rect.x << "," << rect.y << "\t" << rect.width << "," << rect.height << "\t" <<
+                    ostream << f << "\t" << filename << "\t" << image.faceTime << "\t" <<
+                        rect.x << "," << rect.y << "\t" << rect.width << "," << rect.height << "\t" << image.shapeTime << "\t" <<
                         image.leftOuter.x << "," << image.leftOuter.y << "\t" << image.leftInner.x << "," << image.leftInner.y << "\t" <<
-                        image.rightInner.x << "," << image.rightInner.y << "\t" << image.rightOuter.x << "," << image.rightOuter.y << endl;
+                        image.rightInner.x << "," << image.rightInner.y << "\t" << image.rightOuter.x << "," << image.rightOuter.y << "\t" <<
+                        image.nose.x << "," << image.nose.y << endl;
                 }
             }
         }

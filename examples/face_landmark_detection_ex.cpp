@@ -55,6 +55,11 @@
 #include <dlib/image_io.h>
 #include <iostream>
 
+#include "seektypes.h"
+
+#define SHOW_GUI            // ~360KB
+#define USE_LOAD_IMAGE      // ~160KB
+
 #ifdef WIN32
 #define CLOCK_GETTIME(t)    timespec_get(t, TIME_UTC)
 #else
@@ -65,6 +70,105 @@ using namespace dlib;
 using namespace std;
 
 // ----------------------------------------------------------------------------------------
+
+typedef struct imageattr_t
+{
+    uint32_t duration;
+    seekrect_t faceRect;
+    seekpoint_t leftOuter;
+    seekpoint_t leftInner;
+    seekpoint_t rightInner;
+    seekpoint_t rightOuter;
+    seekpoint_t nose;
+} IMAGEATTR_T;
+
+#define MAX_FACES       3
+
+#ifdef SHOW_GUI
+extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
+#else
+extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, const char* filename, SEEKIMAGE_T imageData[MAX_FACES])
+#endif
+{
+    // Output "index" and filename
+    array2d<rgb_pixel> img;
+#ifdef USE_LOAD_IMAGE
+    load_image(img, filename);
+#else
+    load_png(img, filename);
+#endif
+#ifdef PYRAMID_UP
+    // Make the image larger so we can detect small faces.
+    pyramid_up(img);
+#endif
+
+    // Now tell the face detector to give us a list of bounding boxes
+    // around all the faces in the image.
+    std::vector<rectangle> dets = detector(img);
+    size_t nfaces = dets.size();
+    cout << "Number of faces detected: " << nfaces << endl;
+
+    // Now we will go ask the shape_predictor to tell us the pose of
+    // each face we detected.
+    std::vector<full_object_detection> shapes;
+
+    // Limit nfaces to prevent array subscript
+    if (nfaces > MAX_FACES) nfaces = MAX_FACES;
+
+    for (unsigned long j = 0; j < nfaces; ++j)
+    {
+        struct timespec start_time, end_time;
+        CLOCK_GETTIME(&start_time);
+        full_object_detection shape = sp(img, dets[j]);
+        CLOCK_GETTIME(&end_time);
+        uint32_t duration = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+
+        // output face rect to myfile
+        imageattr_t& image = imageData[j];
+        image.duration = duration / 1000;
+        seekrect_t& rect = image.faceRect;
+        rect.x = dets[j].left();
+        rect.y = dets[j].right();
+        rect.width = dets[j].width();
+        rect.height = dets[j].height();
+
+
+
+        int n = shape.num_parts();
+        cout << "number of parts: " << n << endl;
+
+        if (n >= 5) {
+            image.rightOuter.x = shape.part(0).x();
+            image.rightOuter.y = shape.part(0).y();
+            image.rightInner.x = shape.part(1).x();
+            image.rightInner.y = shape.part(1).y();
+            image.leftInner.x = shape.part(2).x();
+            image.leftInner.y = shape.part(2).y();
+            image.leftOuter.x = shape.part(3).x();
+            image.leftOuter.y = shape.part(3).y();
+            image.nose.x = shape.part(4).x();
+            image.nose.y = shape.part(4).y();
+        }
+        // You get the idea, you can get all the face part locations if
+        // you want them.  Here we just store them in shapes so we can
+        // put them on the screen.
+        shapes.push_back(shape);
+    }
+#ifdef SHOW_GUI
+    // Now let's view our face poses on the screen.
+    win.clear_overlay();
+    win.set_image(img);
+    // Show face rectangle in RED
+    win.add_overlay(dets, rgb_pixel(255, 0, 0));
+    // Show face features in GREEN
+    win.add_overlay(render_face_detections(shapes));
+#endif
+#ifdef DEBUG
+    cout << "Hit enter to process the next image..." << endl;
+    cin.get();
+#endif
+    return nfaces;
+}
 
 int main(int argc, char** argv)
 {  
@@ -93,10 +197,8 @@ int main(int argc, char** argv)
         shape_predictor sp;
         deserialize(argv[1]) >> sp;
 
-
+#ifdef SHOW_GUI
         image_window win;
-#ifdef SHOW_FACES
-        image_window win_faces;
 #endif
         ofstream ostream;
         ostream.open("dlib_data.txt");
@@ -106,64 +208,26 @@ int main(int argc, char** argv)
         {
             const char* filename =  argv[i];
             cout << "processing image " << filename << endl;
-            // Output "index" and filename
-            array2d<rgb_pixel> img;
-            load_image(img, argv[i]);
-#ifdef PYRAMID_UP
-            // Make the image larger so we can detect small faces.
-            pyramid_up(img);
+
+            imageattr_t visData[MAX_FACES];
+#ifdef SHOW_GUI
+            int nfaces = find_face(win, detector, sp, filename, visData);
+#else
+            int nfaces = find_face(detector, sp, filename, visData);
 #endif
+            if (nfaces == 0) {
+                ostream << "0\t" << filename << endl;
 
-            // Now tell the face detector to give us a list of bounding boxes
-            // around all the faces in the image.
-            std::vector<rectangle> dets = detector(img);
-            size_t nfaces = dets.size();
-            cout << "Number of faces detected: " << nfaces << endl;
-
-            // Now we will go ask the shape_predictor to tell us the pose of
-            // each face we detected.
-            std::vector<full_object_detection> shapes;
-            for (unsigned long j = 0; j <nfaces; ++j)
-            {
-                struct timespec start_time, end_time;
-                CLOCK_GETTIME(&start_time);
-                full_object_detection shape = sp(img, dets[j]);
-                CLOCK_GETTIME(&end_time);
-                uint32_t duration = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
-                // output face rect to myfile
-                ostream << (i - 2) << "\t" << filename << "\t" << (duration / 1000) << "\t" << dets[j] << "\t";
-
-                int n = shape.num_parts();
-                cout << "number of parts: "<< n << endl;
-                for (int i = 0; i < n; ++i)
-                {
-                    ostream << shape.part(i) << "\t";
+            } else {
+                for (int f = 0; f < nfaces; ++f) {
+                    imageattr_t& image = visData[f];
+                    seekrect_t& rect = image.faceRect;
+                    ostream << f << "\t" << filename << "\t" << image.duration << "\t" <<
+                        rect.x << "," << rect.y << "\t" << rect.width << "," << rect.height << "\t" <<
+                        image.leftOuter.x << "," << image.leftOuter.y << "\t" << image.leftInner.x << "," << image.leftInner.y << "\t" <<
+                        image.rightInner.x << "," << image.rightInner.y << "\t" << image.rightOuter.x << "," << image.rightOuter.y << endl;
                 }
-                // You get the idea, you can get all the face part locations if
-                // you want them.  Here we just store them in shapes so we can
-                // put them on the screen.
-                shapes.push_back(shape);
-                ostream << endl;
             }
-
-            // Now let's view our face poses on the screen.
-            win.clear_overlay();
-            win.set_image(img);
-            // Show face rectangle in RED
-            win.add_overlay(dets, rgb_pixel(255, 0, 0));
-            // Show face features in GREEN
-            win.add_overlay(render_face_detections(shapes));
-#ifdef SHOW_FACES
-            // We can also extract copies of each face that are cropped, rotated upright,
-            // and scaled to a standard size as shown here:
-            dlib::array<array2d<rgb_pixel> > face_chips;
-            extract_image_chips(img, get_face_chip_details(shapes), face_chips);
-            win_faces.set_image(tile_images(face_chips));
-#endif
-#ifdef DEBUG
-            cout << "Hit enter to process the next image..." << endl;
-            cin.get();
-#endif
         }
         ostream.close();
     }

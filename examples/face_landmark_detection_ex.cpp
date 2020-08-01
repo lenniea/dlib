@@ -100,10 +100,10 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 #endif
     struct timespec start_time, end_time;
     CLOCK_GETTIME(&start_time);
-#ifdef PYRAMID_UP
-    // Make the image larger so we can detect small faces.
-    pyramid_up(img);
-#endif
+    if (img.size() <= 320*240) {
+        // Make the image larger so we can detect small faces.
+        pyramid_up(img);
+    }
 
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.

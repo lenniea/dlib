@@ -59,6 +59,7 @@
 
 #define SHOW_GUI            // ~360KB
 #define USE_LOAD_IMAGE      // ~160KB
+#define RESIZE_IMAGE        // speeds up by 3x-3.5x
 
 #ifdef WIN32
 #define CLOCK_GETTIME(t)    timespec_get(t, TIME_UTC)
@@ -81,7 +82,101 @@ typedef struct imageattr_t
     seekpoint_t rightInner;
     seekpoint_t rightOuter;
     seekpoint_t nose;
+    seekpoint_t leftThermal;
+    seekpoint_t rightThermal;
+    float leftTemp;
+    float rightTemp;
 } IMAGEATTR_T;
+
+
+#ifdef RESIZE_IMAGE
+    #define SCALE		3.27
+#else
+    #define SCALE		6.55
+#endif
+#define OFFSET_X	-0.5
+#define OFFSET_Y	+7.5
+
+#define CONVERT_X(x)	((int) ((x) / SCALE + OFFSET_X + 0.5f))
+#define CONVERT_Y(y)	((int) ((y) / SCALE + OFFSET_Y + 0.5f))
+
+#define THERM_MAX_COLS	320
+#define THERM_MAX_ROWS	240
+
+char folder[MAX_PATH];
+
+#define THERM_MAX_PIXELS		(THERM_MAX_ROWS * THERM_MAX_COLS)
+float thermbuf[THERM_MAX_PIXELS];
+
+int diameter = 2;
+
+size_t widthFromPixels(size_t pixels)
+{
+    switch (pixels) {
+    case 103 * 78:
+        return 103;
+    case 206 * 156:
+        return 206;
+    case 320 * 240:
+        return 320;
+    }
+    return 0;
+}
+
+float findCanthus(int xCenter, int yCenter, size_t cols)
+{
+    int xMax = xCenter;
+    int yMax = yCenter;
+    float maxTemp = thermbuf[xMax + yMax * cols];
+    for (int yoff = 0; yoff < diameter; ++yoff) {
+        int y = yCenter + yoff;
+        for (int xoff = 0; xoff < diameter; ++xoff) {
+            int x = xCenter + xoff;
+            if (x < cols) {
+                float temp = thermbuf[x + y * cols];
+                if (temp > maxTemp) {
+                    xMax = x;
+                    yMax = y;
+                    maxTemp = temp;
+                }
+            }
+        }
+    }
+    fprintf(stderr, "findCanthus(%d,%d)=%0.2f\n", xMax, yMax, maxTemp);
+    return maxTemp;
+}
+
+bool process_frame(imageattr_t& image, int n)
+{
+    int leftX = CONVERT_X(image.leftInner.x);
+    int leftY = CONVERT_Y(image.leftInner.y);
+    int rightX = CONVERT_X(image.rightInner.x);
+    int rightY = CONVERT_Y(image.rightInner.y);
+    char pathname[MAX_PATH];
+    sprintf(pathname, "Therm%04d.bin", n);
+    bool result = false;
+    image.leftTemp = NAN;
+    image.rightTemp = NAN;
+    FILE* fp = fopen(pathname, "rb");
+    if (fp == NULL) {
+        cout << "ERROR opening file " << pathname << "!\n";
+    }
+    else {
+        size_t nread = fread(thermbuf, sizeof(float), THERM_MAX_PIXELS, fp);
+        size_t thermCols = widthFromPixels(nread);
+        if (thermCols) {
+            image.leftThermal.x = leftX;
+            image.leftThermal.y = leftY;
+            image.rightThermal.x = rightX;
+            image.rightThermal.y = rightY;
+            image.leftTemp = findCanthus(leftX, leftY, thermCols);
+            image.rightTemp = findCanthus(rightX - diameter, rightY, thermCols);
+            result = true;
+        }
+        fclose(fp);
+    }
+    return result;
+}
 
 #define MAX_FACES       3
 
@@ -100,9 +195,18 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 #endif
     struct timespec start_time, end_time;
     CLOCK_GETTIME(&start_time);
-    if (img.size() <= 320*240) {
+    int cols = img.nc();
+    int rows = img.nr();
+    if (cols < 320 && rows < 240) {
         // Make the image larger so we can detect small faces.
+        cout << "pyramid up " << cols << "x" << rows << " ";
         pyramid_up(img);
+    } else if (cols >= 640 && rows >= 480) {
+#ifdef RESIZE_IMAGE
+        // shrink to QVGA
+        cout << "resize_image " << cols << "x" << rows << " ";
+        resize_image(0.5, img);
+#endif
     }
 
     // Now tell the face detector to give us a list of bounding boxes
@@ -159,6 +263,10 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         // you want them.  Here we just store them in shapes so we can
         // put them on the screen.
         shapes.push_back(shape);
+
+        image.leftTemp = NAN;
+        image.rightTemp = NAN;
+        bool have_temp = process_frame(image, j);
     }
 #ifdef SHOW_GUI
     // Now let's view our face poses on the screen.
@@ -232,7 +340,13 @@ int main(int argc, char** argv)
                         rect.x << "," << rect.y << "\t" << rect.width << "," << rect.height << "\t" << image.shapeTime << "\t" <<
                         image.leftOuter.x << "," << image.leftOuter.y << "\t" << image.leftInner.x << "," << image.leftInner.y << "\t" <<
                         image.rightInner.x << "," << image.rightInner.y << "\t" << image.rightOuter.x << "," << image.rightOuter.y << "\t" <<
-                        image.nose.x << "," << image.nose.y << endl;
+                        image.nose.x << "," << image.nose.y;
+                    if (!isnan(image.leftTemp) && !isnan(image.rightTemp)) {
+                        ostream << "\t" << image.leftThermal.x << "," << image.leftThermal.y << "\t" << image.rightThermal.x << "," << image.rightThermal.y;
+                        ostream << setprecision(2) << fixed;
+                        ostream << "\t" << image.leftTemp << "," << image.rightTemp;
+                    }
+                    ostream << endl;
                 }
             }
         }

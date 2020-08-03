@@ -65,6 +65,8 @@
 #define CLOCK_GETTIME(t)    timespec_get(t, TIME_UTC)
 #else
 #define CLOCK_GETTIME(t)    clock_gettime(CLOCK_REALTIME, t)
+#include <linux/limits.h>
+#define MAX_PATH		PATH_MAX
 #endif
 
 using namespace dlib;

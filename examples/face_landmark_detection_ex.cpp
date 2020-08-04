@@ -195,8 +195,6 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 #else
     load_png(img, filename);
 #endif
-    struct timespec start_time, end_time;
-    CLOCK_GETTIME(&start_time);
     int cols = img.nc();
     int rows = img.nr();
     if (cols < 320 && rows < 240) {
@@ -213,7 +211,11 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
-    std::vector<rectangle> dets = detector(img);
+    struct timespec start_time, end_time;
+    CLOCK_GETTIME(&start_time);
+    std::vector<rectangle> dets;
+//    dets = detector(img, 0.0f);
+    dets = detector(img, -0.5f);
     CLOCK_GETTIME(&end_time);
     uint32_t faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
 

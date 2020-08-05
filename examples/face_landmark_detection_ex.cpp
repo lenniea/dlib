@@ -55,6 +55,7 @@
 #include <dlib/image_io.h>
 #include <iostream>
 
+#include "blobrectf.h"
 #include "seektypes.h"
 
 #define SHOW_GUI            // ~360KB
@@ -92,15 +93,20 @@ typedef struct imageattr_t
 
 
 #ifdef RESIZE_IMAGE
-    #define SCALE		3.27
+    #define DEFAULT_SCALE		3.27
 #else
-    #define SCALE		6.55
+    #define DEFAULT_SCALE		6.55
 #endif
 #define OFFSET_X	-0.5
 #define OFFSET_Y	+7.5
 
-#define CONVERT_X(x)	((int) ((x) / SCALE + OFFSET_X + 0.5f))
-#define CONVERT_Y(y)	((int) ((y) / SCALE + OFFSET_Y + 0.5f))
+float SCALE = DEFAULT_SCALE;
+
+#define VIS_TO_THERM_X(x)	((int) ((x) / SCALE + OFFSET_X + 0.5f))
+#define VIS_TO_THERM_Y(y)	((int) ((y) / SCALE + OFFSET_Y + 0.5f))
+
+#define THERM_TO_VIS_X(x)	((int) (((x) - OFFSET_X) * SCALE + 0.5f))
+#define THERM_TO_VIS_Y(y)	((int) (((y) - OFFSET_Y) * SCALE + 0.5f))
 
 #define THERM_MAX_COLS	320
 #define THERM_MAX_ROWS	240
@@ -109,6 +115,7 @@ char folder[MAX_PATH];
 
 #define THERM_MAX_PIXELS		(THERM_MAX_ROWS * THERM_MAX_COLS)
 float thermbuf[THERM_MAX_PIXELS];
+seeksize_t thermSize;
 
 int diameter = 2;
 
@@ -116,8 +123,10 @@ size_t widthFromPixels(size_t pixels)
 {
     switch (pixels) {
     case 103 * 78:
+        SCALE = DEFAULT_SCALE * 2;
         return 103;
     case 206 * 156:
+        SCALE = DEFAULT_SCALE;
         return 206;
     case 320 * 240:
         return 320;
@@ -125,62 +134,74 @@ size_t widthFromPixels(size_t pixels)
     return 0;
 }
 
-float findCanthus(int xCenter, int yCenter, size_t cols)
+float findCanthus(float* thermbuf, seeksize_t frameSize, int xCenter, int yCenter)
 {
     int xMax = xCenter;
     int yMax = yCenter;
-    float maxTemp = thermbuf[xMax + yMax * cols];
+    float maxTemp = thermbuf[xMax + yMax * frameSize.width];
     for (int yoff = 0; yoff < diameter; ++yoff) {
         int y = yCenter + yoff;
-        for (int xoff = 0; xoff < diameter; ++xoff) {
-            int x = xCenter + xoff;
-            if (x < cols) {
-                float temp = thermbuf[x + y * cols];
-                if (temp > maxTemp) {
-                    xMax = x;
-                    yMax = y;
-                    maxTemp = temp;
+        if (y < frameSize.height) {
+            for (int xoff = 0; xoff < diameter; ++xoff) {
+                int x = xCenter + xoff;
+                if (x < frameSize.width) {
+                    float temp = thermbuf[x + y * frameSize.width];
+                    if (temp > maxTemp) {
+                        xMax = x;
+                        yMax = y;
+                        maxTemp = temp;
+                    }
                 }
             }
         }
     }
-    fprintf(stderr, "findCanthus(%d,%d)=%0.2f\n", xMax, yMax, maxTemp);
+    fprintf(stdout, "findCanthus(%d,%d)=%0.2f\n", xMax, yMax, maxTemp);
     return maxTemp;
+}
+
+size_t read_therm_frame(int n, float* thermbuf, seeksize_t& frame_size)
+{
+    char pathname[MAX_PATH];
+    sprintf(pathname, "Therm%04d.bin", n);
+    frame_size.width = frame_size.height = -1;
+    FILE* fp = fopen(pathname, "rb");
+    if (fp == NULL) {
+        fprintf(stderr, "ERROR opening file %s!\n", pathname);
+        return 0;
+    }
+    size_t nread = fread(thermbuf, sizeof(float), THERM_MAX_PIXELS, fp);
+    fclose(fp);
+    size_t width = widthFromPixels(nread);
+    if (width > 0) {
+        frame_size.height = nread / width;
+        frame_size.width = width;
+    }
+    return width;
 }
 
 bool process_frame(imageattr_t& image, int n)
 {
-    int leftX = CONVERT_X(image.leftInner.x);
-    int leftY = CONVERT_Y(image.leftInner.y);
-    int rightX = CONVERT_X(image.rightInner.x);
-    int rightY = CONVERT_Y(image.rightInner.y);
-    char pathname[MAX_PATH];
-    sprintf(pathname, "Therm%04d.bin", n);
+    int leftX = VIS_TO_THERM_X(image.leftInner.x);
+    int leftY = VIS_TO_THERM_Y(image.leftInner.y);
+    int rightX = VIS_TO_THERM_X(image.rightInner.x);
+    int rightY = VIS_TO_THERM_Y(image.rightInner.y);
     bool result = false;
     image.leftTemp = NAN;
     image.rightTemp = NAN;
-    FILE* fp = fopen(pathname, "rb");
-    if (fp == NULL) {
-        cout << "ERROR opening file " << pathname << "!\n";
-    }
-    else {
-        size_t nread = fread(thermbuf, sizeof(float), THERM_MAX_PIXELS, fp);
-        size_t thermCols = widthFromPixels(nread);
-        if (thermCols) {
-            image.leftThermal.x = leftX;
-            image.leftThermal.y = leftY;
-            image.rightThermal.x = rightX;
-            image.rightThermal.y = rightY;
-            image.leftTemp = findCanthus(leftX, leftY, thermCols);
-            image.rightTemp = findCanthus(rightX - diameter, rightY, thermCols);
-            result = true;
-        }
-        fclose(fp);
+    if (thermSize.width > 0 && thermSize.height > 0) {
+        image.leftThermal.x = leftX;
+        image.leftThermal.y = leftY;
+        image.rightThermal.x = rightX;
+        image.rightThermal.y = rightY;
+        image.leftTemp = findCanthus(thermbuf, thermSize, leftX, leftY);
+        image.rightTemp = findCanthus(thermbuf, thermSize, rightX - diameter, rightY);
+        result = true;
     }
     return result;
 }
 
-#define MAX_FACES       3
+#define MAX_FACES       5
+#define MAX_BLOBS       5
 
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
@@ -209,6 +230,20 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 #endif
     }
 
+    // Try to read corresponding thermal frame into thermbuf
+    int n = 0;
+    // Look at chars before extension
+    const char* ptr = strrchr(filename, '.');
+    if (ptr != NULL) {
+        char ch = ptr[-1];
+        while (isdigit(ch)) {
+            --ptr;
+            ch = ptr[-1];
+        }
+        n = atoi(ptr);
+    }
+    size_t therm_width = read_therm_frame(n, thermbuf, thermSize);
+
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
     struct timespec start_time, end_time;
@@ -225,9 +260,59 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     // Now we will go ask the shape_predictor to tell us the pose of
     // each face we detected.
     std::vector<full_object_detection> shapes;
-
-    // Limit nfaces to prevent array subscript
-    if (nfaces > MAX_FACES) nfaces = MAX_FACES;
+    rectangle faceBlob;
+    seekrect_t refRect;
+    float refMean =0.0f;
+    float refMax = FLT_MIN;
+    if (nfaces == 0) {
+        BLOB_RECT blobs[MAX_BLOBS];
+        // Detect reference black body in thermal
+        int blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
+        if (blobCount > 0) {
+            int thermLeft = blobs[0].left;
+            int thermTop = blobs[0].top;
+            int thermRight = blobs[0].right;
+            int thermBot = blobs[0].bottom;
+            refRect.x = thermLeft;
+            refRect.y = thermTop;
+            refRect.width = thermRight - thermLeft + 1;
+            refRect.height = thermBot - thermTop + 1;
+            // Overwrite reference pixels with 25.0f (background)
+            float sum = 0.0;
+            for (int y = thermTop; y < thermBot; ++y) {
+                for (int x = thermLeft; x < thermRight; ++x) {
+                    int index = y * thermSize.width + x;
+                    float temp = thermbuf[index];
+                    if (temp > refMax) {
+                        refMax = temp;
+                    }
+                    sum += temp;
+                    thermbuf[index] = 25.0f;
+                }
+            }
+            // Calculate average black body temperature
+            refMean = sum / (refRect.width * refRect.height);
+            fprintf(stdout, "Reference Black Body=%d\t%d,%d\t%d,%d max=%0.2f mean=%0.2f\n", blobCount, refRect.x, refRect.y, refRect.width, refRect.height, refMax, refMean);
+        }
+        // Try to locate face blob in thermal
+        blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
+        if (blobCount > 0) {
+            int thermLeft = blobs[0].left;
+            int thermTop = blobs[0].top;
+            int thermRight = blobs[0].right;
+            int thermBot = blobs[0].bottom;
+            faceBlob.set_left(THERM_TO_VIS_X(thermLeft));
+            faceBlob.set_top(THERM_TO_VIS_Y(thermTop));
+            faceBlob.set_right(THERM_TO_VIS_X(thermRight));
+            faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
+            dets.push_back(faceBlob);
+            fprintf(stdout, "Visible Face=%d\t%d,%d\t%d,%d\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
+            nfaces = 1;
+        }
+    } else if (nfaces > MAX_FACES) {
+        // Limit nfaces to prevent array subscript
+        nfaces = MAX_FACES;
+    }
 
     for (unsigned long j = 0; j < nfaces; ++j)
     {
@@ -236,7 +321,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         CLOCK_GETTIME(&end_time);
         uint32_t shapeTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
 
-        // output face rect to myfile
+        // save face rect in imageData
         imageattr_t& image = imageData[j];
         image.faceTime = faceTime / 1000;
         image.shapeTime = shapeTime / 1000;

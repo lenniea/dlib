@@ -60,7 +60,10 @@
 
 #define SHOW_GUI            // ~360KB
 #define USE_LOAD_IMAGE      // ~160KB
-#define RESIZE_IMAGE        // speeds up by 3x-3.5x
+
+#define BACKDOOR
+//#define HALLWAY
+//#define TRIPOD
 
 #ifdef WIN32
 #define CLOCK_GETTIME(t)    timespec_get(t, TIME_UTC)
@@ -91,16 +94,29 @@ typedef struct imageattr_t
     float rightTemp;
 } IMAGEATTR_T;
 
+bool shrink_image = false;
 
-#ifdef RESIZE_IMAGE
-    #define DEFAULT_SCALE		3.27
+#define SCALE_8K    		    6.55
+#define SCALE_32K               (SCALE_8K / 2)
+
+#define THERM_FACE_SIZE_8K       18
+#define THERM_FACE_SIZE_32K      (THERM_FACE_SIZE_8K*2)
+
+#if defined(BACKDOOR)
+float OFFSET_X = -1.0;
+float OFFSET_Y = +7.0;
+#elif defined(HALLWAY)
+float OFFSET_X = +3.0;
+float OFFSET_Y = -10.0;
+#elif defined(TRIPOD)
+float OFFSET_X = +3.0;
+float OFFSET_Y = -3.0;
 #else
-    #define DEFAULT_SCALE		6.55
+#error Must define BACKDOOR, HALLWAY or TRIPOD
 #endif
-#define OFFSET_X	-0.5
-#define OFFSET_Y	+7.5
 
-float SCALE = DEFAULT_SCALE;
+float SCALE = SCALE_8K;
+int THERM_FACE_SIZE = THERM_FACE_SIZE_8K;
 
 #define VIS_TO_THERM_X(x)	((int) ((x) / SCALE + OFFSET_X + 0.5f))
 #define VIS_TO_THERM_Y(y)	((int) ((y) / SCALE + OFFSET_Y + 0.5f))
@@ -123,10 +139,12 @@ size_t widthFromPixels(size_t pixels)
 {
     switch (pixels) {
     case 103 * 78:
-        SCALE = DEFAULT_SCALE;
+        SCALE = SCALE_8K;
+        THERM_FACE_SIZE = THERM_FACE_SIZE_8K;
         return 103;
     case 206 * 156:
-        SCALE = DEFAULT_SCALE / 2;
+        SCALE = SCALE_32K;
+        THERM_FACE_SIZE = THERM_FACE_SIZE_32K;
         return 206;
     case 320 * 240:
         return 320;
@@ -179,7 +197,7 @@ size_t read_therm_frame(int n, float* thermbuf, seeksize_t& frame_size)
     return width;
 }
 
-bool process_frame(imageattr_t& image, int n)
+bool process_frame(imageattr_t& image)
 {
     int leftX = VIS_TO_THERM_X(image.leftInner.x);
     int leftY = VIS_TO_THERM_Y(image.leftInner.y);
@@ -202,7 +220,6 @@ bool process_frame(imageattr_t& image, int n)
 
 #define MAX_FACES       5
 #define MAX_BLOBS       5
-#define THERM_FACE_MIN  25
 
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
@@ -223,12 +240,10 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         // Make the image larger so we can detect small faces.
         cout << "pyramid up " << cols << "x" << rows << " ";
         pyramid_up(img);
-    } else if (cols >= 640 && rows >= 480) {
-#ifdef RESIZE_IMAGE
+    } else if (shrink_image) {
         // shrink to QVGA
         cout << "resize_image " << cols << "x" << rows << " ";
         resize_image(0.5, img);
-#endif
     }
 
     // Try to read corresponding thermal frame into thermbuf
@@ -313,7 +328,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
             int thermTop = blobs[0].top;
             int thermRight = blobs[0].right;
             int thermBot = blobs[0].bottom;
-            if (thermRight - thermLeft >= THERM_FACE_MIN && thermBot - thermTop >= THERM_FACE_MIN) {
+            if (thermRight - thermLeft >= THERM_FACE_SIZE && thermBot - thermTop >= THERM_FACE_SIZE) {
                 faceBlob.set_left(THERM_TO_VIS_X(thermLeft));
                 faceBlob.set_top(THERM_TO_VIS_Y(thermTop));
                 faceBlob.set_right(THERM_TO_VIS_X(thermRight));
@@ -371,7 +386,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 
         image.leftTemp = NAN;
         image.rightTemp = NAN;
-        bool have_temp = process_frame(image, j);
+        bool have_temp = process_frame(image);
     }
 #ifdef SHOW_GUI
     // Now let's view our face poses on the screen.
@@ -387,6 +402,24 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     cin.get();
 #endif
     return nfaces;
+}
+
+void parse_option(const char* str)
+{
+    char ch = *str++;
+    switch (ch) {
+    case 'x':
+        OFFSET_X = atof(str);
+        break;
+    case 'y':
+        OFFSET_Y = atof(str);
+        break;
+    case 's':
+        shrink_image = true;
+        break;
+    default:
+        fprintf(stderr, "ERROR unknown option '%c'!", ch);
+    }
 }
 
 int main(int argc, char** argv)
@@ -426,6 +459,12 @@ int main(int argc, char** argv)
         for (int i = 2; i < argc; ++i)
         {
             const char* filename =  argv[i];
+
+            if (filename[0] == '-') {
+                parse_option(filename + 1);
+                continue;
+            }
+
             cout << "processing image " << filename << endl;
 
             imageattr_t visData[MAX_FACES];

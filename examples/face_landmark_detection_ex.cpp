@@ -123,10 +123,10 @@ size_t widthFromPixels(size_t pixels)
 {
     switch (pixels) {
     case 103 * 78:
-        SCALE = DEFAULT_SCALE * 2;
+        SCALE = DEFAULT_SCALE;
         return 103;
     case 206 * 156:
-        SCALE = DEFAULT_SCALE;
+        SCALE = DEFAULT_SCALE / 2;
         return 206;
     case 320 * 240:
         return 320;
@@ -202,6 +202,7 @@ bool process_frame(imageattr_t& image, int n)
 
 #define MAX_FACES       5
 #define MAX_BLOBS       5
+#define THERM_FACE_MIN  30
 
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
@@ -247,15 +248,26 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
     struct timespec start_time, end_time;
-    CLOCK_GETTIME(&start_time);
     std::vector<rectangle> dets;
-//    dets = detector(img, 0.0f);
-    dets = detector(img, -0.5f);
-    CLOCK_GETTIME(&end_time);
-    uint32_t faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+    size_t nfaces;
+    uint32_t faceTime;
+    double adjust;
+    for (adjust = 0.0; ; adjust -= 0.25) {
+        CLOCK_GETTIME(&start_time);
+        dets = detector(img, adjust);
+        CLOCK_GETTIME(&end_time);
+        faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+        nfaces = dets.size();
+        if (nfaces > 0 || adjust <= -0.5)
+            break;
+    }
 
-    size_t nfaces = dets.size();
-    cout << "Number of faces detected: " << nfaces << endl;
+    cout << "Number of faces detected: " << nfaces;
+    if (adjust != 0) {
+        cout << " adjust=" << adjust << endl;
+    } else {
+        cout << endl;
+    }
 
     // Now we will go ask the shape_predictor to tell us the pose of
     // each face we detected.
@@ -301,13 +313,17 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
             int thermTop = blobs[0].top;
             int thermRight = blobs[0].right;
             int thermBot = blobs[0].bottom;
-            faceBlob.set_left(THERM_TO_VIS_X(thermLeft));
-            faceBlob.set_top(THERM_TO_VIS_Y(thermTop));
-            faceBlob.set_right(THERM_TO_VIS_X(thermRight));
-            faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
-            dets.push_back(faceBlob);
-            fprintf(stdout, "Visible Face=%d\t%d,%d\t%d,%d\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
-            nfaces = 1;
+            if (thermRight - thermLeft >= THERM_FACE_MIN && thermBot - thermTop >= THERM_FACE_MIN) {
+                faceBlob.set_left(THERM_TO_VIS_X(thermLeft));
+                faceBlob.set_top(THERM_TO_VIS_Y(thermTop));
+                faceBlob.set_right(THERM_TO_VIS_X(thermRight));
+                faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
+                dets.push_back(faceBlob);
+                fprintf(stdout, "Visible Faces=%d\t%d,%d\t%d,%d\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
+            } else {
+                fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermRight - thermLeft, thermBot - thermTop);
+            }
+                nfaces = 1;
         }
     } else if (nfaces > MAX_FACES) {
         // Limit nfaces to prevent array subscript

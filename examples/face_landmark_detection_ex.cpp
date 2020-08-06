@@ -202,7 +202,7 @@ bool process_frame(imageattr_t& image, int n)
 
 #define MAX_FACES       5
 #define MAX_BLOBS       5
-#define THERM_FACE_MIN  30
+#define THERM_FACE_MIN  25
 
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
@@ -319,11 +319,11 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
                 faceBlob.set_right(THERM_TO_VIS_X(thermRight));
                 faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
                 dets.push_back(faceBlob);
+                nfaces = 1;
                 fprintf(stdout, "Visible Faces=%d\t%d,%d\t%d,%d\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
             } else {
                 fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermRight - thermLeft, thermBot - thermTop);
             }
-                nfaces = 1;
         }
     } else if (nfaces > MAX_FACES) {
         // Limit nfaces to prevent array subscript

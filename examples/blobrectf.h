@@ -5,6 +5,12 @@
 extern "C" {
 #endif
 
+#ifdef _MSC_VER
+#define STDCALL		__stdcall
+#else
+#define STDCALL
+#endif
+
 #include <stdint.h>         // for uint8_t, uint16_t
 #include <stdlib.h>         // for size_t
 
@@ -23,9 +29,9 @@ typedef struct blob_rect
     int bottom;
 } BLOB_RECT;
 
-int __stdcall BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count);
+int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count);
 
-void __stdcall BlobSort(BLOB_RECT* pRect, int count);
+void STDCALL BlobSort(BLOB_RECT* pRect, int count);
 
 #ifdef DEBUG
     void DumpBlobs(BLOB_RECT* pBlob, int result);

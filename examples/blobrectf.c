@@ -81,7 +81,7 @@ static int ScanBlobF(float* image, int width, float thresh, int row, int col, in
  * 
  *  @return             Returns the number of Blobs detected or negative error code
  */
-int __stdcall BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count)
+int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count)
 {
     int row;
     int blobCount = 0;
@@ -154,7 +154,7 @@ static uint32_t SortKey(BLOB_RECT* pRect)
  */
 #define COPY_BLOB_RECT(a,b)  { (a)->left = (b)->left; (a)->top = (b)->top; (a)->right = (b)->right; (a)->bottom = (b)->bottom; }
 
-void __stdcall BlobSort(BLOB_RECT* pRect, int count)
+void STDCALL BlobSort(BLOB_RECT* pRect, int count)
 {
     // Dumb bubble sort for now...
     for (int i = 0; i < count - 1; ++i)

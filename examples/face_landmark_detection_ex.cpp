@@ -290,7 +290,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     rectangle faceBlob;
     seekrect_t refRect;
     float refMean =0.0f;
-    float refMax = FLT_MIN;
+    float refMax = -273.15;
     if (nfaces == 0) {
         BLOB_RECT blobs[MAX_BLOBS];
         // Detect reference black body in thermal
@@ -335,7 +335,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
                 faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
                 dets.push_back(faceBlob);
                 nfaces = 1;
-                fprintf(stdout, "Visible Faces=%d\t%d,%d\t%d,%d\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
+                fprintf(stdout, "Visible Faces=%d\t%ld,%ld\t%lu,%lu\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
             } else {
                 fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermRight - thermLeft, thermBot - thermTop);
             }

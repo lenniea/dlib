@@ -14,6 +14,8 @@ extern "C" {
 #include <stdint.h>         // for uint8_t, uint16_t
 #include <stdlib.h>         // for size_t
 
+#include "seektypes.h"
+
 typedef enum blob_status
 {
     BLOB_INVALID_DEPTH = -2,
@@ -21,20 +23,12 @@ typedef enum blob_status
     BLOB_NONE = 0,
 } BLOB_STATUS;
 
-typedef struct blob_rect
-{
-    int left;
-    int top;
-    int right;
-    int bottom;
-} BLOB_RECT;
+int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrect_t* pBlob, int count);
 
-int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count);
-
-void STDCALL BlobSort(BLOB_RECT* pRect, int count);
+void STDCALL BlobSort(seekrect_t* pRect, int count);
 
 #ifdef DEBUG
-    void DumpBlobs(BLOB_RECT* pBlob, int result);
+    void DumpBlobs(seekrect_t* pBlob, int result);
 #endif
 
 #ifdef __cplusplus

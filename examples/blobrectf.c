@@ -4,22 +4,26 @@
 
 /*
  *  Internal function to check if Blob already exists in 
- *  array of Blob BLOB_RECTs
+ *  array of Blob seekrect_t
  * 
- *  @param  pBlob       --> array of Blob BLOB_RECTs
- *  @param  count       count of Blob BLOB_RECTs
+ *  @param  pBlob       --> array of Blob seekrect_t
+ *  @param  count       count of Blob seekrect_t
  *  @param  row         Row of blob (y)
  *  @param  left        Left column of Blob (x1)
  *  @param  right       Right column of Blob (x2)
  */
-static int CheckBlob(BLOB_RECT* pBlob, size_t count, int row, int left, int right)
+static int CheckBlob(seekrect_t* pBlob, size_t count, int row, int left, int right)
 {
     size_t i;
     if (right - left < BLOB_MIN) {
         return 1;
     }
     for (i = 0; i < count; ++i) {
-        if (row >= pBlob[i].top && row < pBlob[i].bottom && left >= pBlob[i].left && right <= pBlob[i].right) {
+        int blobLeft = pBlob[i].x;
+        int blobRight = blobLeft + pBlob[i].width;
+        int blobTop = pBlob[i].y;
+        int blobBottom = blobTop + pBlob[i].height;
+        if (row >= blobTop && row < blobBottom && left >= blobLeft && right < blobRight) {
             return 1;
         }
     }
@@ -76,12 +80,12 @@ static int ScanBlobF(float* image, int width, float thresh, int row, int col, in
  *  @param width        Width of the image (pixels)
  *  @param height       Height of the image (pixels)
  *  @param thresh       threshold to detect blobs
- *  @param pBlob        --> array of BLOB_RECTangles to detect Blobs
- *  @param count        (Maximum) number of BLOB_RECTANGLES to detect
+ *  @param pBlob        --> array of seek_rect_t's to detect Blobs
+ *  @param count        (Maximum) number of seekrect_t's to detect
  * 
  *  @return             Returns the number of Blobs detected or negative error code
  */
-int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RECT* pBlob, int count)
+int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrect_t* pBlob, int count)
 {
     int row;
     int blobCount = 0;
@@ -109,10 +113,10 @@ int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RE
                 if (endBlobNext < 0) {
                     int blobWidth = endBlob - startBlob;
                     if (blobCount < count && height > BLOB_MIN && blobWidth >= BLOB_MIN) {
-                        pBlob[blobCount].left = startBlob;
-                        pBlob[blobCount].top = row;
-                        pBlob[blobCount].right = endBlob;
-                        pBlob[blobCount].bottom = row + height;
+                        pBlob[blobCount].x = startBlob;
+                        pBlob[blobCount].y = row;
+                        pBlob[blobCount].width = endBlob - startBlob + 1;
+                        pBlob[blobCount].height = height;
                         ++blobCount;
                     }
                     break;
@@ -127,7 +131,7 @@ int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RE
                 if (endBlobNext > endBlob) {
                     endBlob = endBlobNext;
                 }
-                // Extend Blob BLOB_RECT
+                // Extend Blob seekrect_t's
                 ++height; ++next;
                 endBlobNext = 0;
             }
@@ -137,10 +141,10 @@ int STDCALL BlobRectF(float* image, int width, int height, float thresh, BLOB_RE
 }
 
 // Internal function to return [Blob] Sort Key
-static uint32_t SortKey(BLOB_RECT* pRect)
+static uint32_t SortKey(seekrect_t* pRect)
 {
-    int x = (pRect->left + pRect->right);           // drop bottom 3-bits for sorting
-    int y = (pRect->top + pRect->bottom) >> 4;      // drop bottom 3-bits for sorting
+    int x = (pRect->x + pRect->width);           // drop bottom 3-bits for sorting
+    int y = (pRect->y + pRect->height) >> 4;      // drop bottom 3-bits for sorting
     return x + (y << 16);
 }
 
@@ -149,27 +153,27 @@ static uint32_t SortKey(BLOB_RECT* pRect)
  *
  *  Sort Blob RECTangles in a 2D Image by row (Y) then column (X).
  *
- *  @param pRect    --> Blob BLOB_RECTangles to sort
- *  @param count    # of BLOB_RECTangles
+ *  @param pRect    --> Blob seekrect_t's to sort
+ *  @param count    # of seekrect_t's
  */
-#define COPY_BLOB_RECT(a,b)  { (a)->left = (b)->left; (a)->top = (b)->top; (a)->right = (b)->right; (a)->bottom = (b)->bottom; }
+#define COPY_SEEK_RECT(a,b)  { (a)->x = (b)->x; (a)->y = (b)->y; (a)->width = (b)->width; (a)->height = (b)->height; }
 
-void STDCALL BlobSort(BLOB_RECT* pRect, int count)
+void STDCALL BlobSort(seekrect_t* pRect, int count)
 {
     // Dumb bubble sort for now...
     for (int i = 0; i < count - 1; ++i)
     {
-        BLOB_RECT* pLeft = pRect + i;
+        seekrect_t* pLeft = pRect + i;
         for (int j = i + 1; j < count; ++j)
         {
-            BLOB_RECT* pRight = pRect + j;
+            seekrect_t* pRight = pRect + j;
             uint32_t left = SortKey(pLeft);
             uint32_t right = SortKey(pRight);
             if (left > right) {
-                BLOB_RECT temp;
-                COPY_BLOB_RECT(&temp, pLeft);
-                COPY_BLOB_RECT(pLeft, pRight);
-                COPY_BLOB_RECT(pLeft, &temp);
+                seekrect_t temp;
+                COPY_SEEK_RECT(&temp, pLeft);
+                COPY_SEEK_RECT(pLeft, pRight);
+                COPY_SEEK_RECT(pLeft, &temp);
             }
         }
     }
@@ -184,16 +188,16 @@ void STDCALL BlobSort(BLOB_RECT* pRect, int count)
  * 
  *  Dump Blobs to stderr for debugging purposes
  * 
- *  @param pRect    --> Blob BLOB_RECTangles to sort
- *  @param count    # of BLOB_RECTangles
+ *  @param pRect    --> Blob seekrect_t's to sort
+ *  @param count    # of seekrect_t's
  */
-void __stdcall DumpBlobs(BLOB_RECT* pBlobs, int result)
+void __stdcall DumpBlobs(seekrect_t* pBlobs, int result)
 {
     fprintf(stderr, "DumpBlobs result=%d\n", result);
     if (result > 0) {
-        printf("#\tLeft\tTop\tRight\tBottom\n");
+        printf("#\tLeft\tTop\tWidth\tHeight\n");
         for (int i = 0; i < result; ++i) {
-            fprintf(stderr, "%d\t%d\t%d\t%d\t%d\n", i, pBlobs[i].left, pBlobs[i].top, pBlobs[i].right, pBlobs[i].bottom);
+            fprintf(stderr, "%d\t%d\t%d\t%d\t%d\n", i, pBlobs[i].x, pBlobs[i].y, pBlobs[i].width, pBlobs[i].height);
         }
     }
 }

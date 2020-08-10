@@ -292,22 +292,22 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     float refMean =0.0f;
     float refMax = -273.15;
     if (nfaces == 0) {
-        BLOB_RECT blobs[MAX_BLOBS];
+        seekrect_t blobs[MAX_BLOBS];
         // Detect reference black body in thermal
         int blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
-            int thermLeft = blobs[0].left;
-            int thermTop = blobs[0].top;
-            int thermRight = blobs[0].right;
-            int thermBot = blobs[0].bottom;
+            int thermLeft = blobs[0].x;
+            int thermTop = blobs[0].y;
+            int thermWidth = blobs[0].width;
+            int thermHeight = blobs[0].height;
             refRect.x = thermLeft;
             refRect.y = thermTop;
-            refRect.width = thermRight - thermLeft + 1;
-            refRect.height = thermBot - thermTop + 1;
+            refRect.width = thermWidth;
+            refRect.height = thermHeight;
             // Overwrite reference pixels with 25.0f (background)
             float sum = 0.0;
-            for (int y = thermTop; y < thermBot; ++y) {
-                for (int x = thermLeft; x < thermRight; ++x) {
+            for (int y = thermTop; y < thermTop + thermHeight; ++y) {
+                for (int x = thermLeft; x < thermLeft + thermWidth; ++x) {
                     int index = y * thermSize.width + x;
                     float temp = thermbuf[index];
                     if (temp > refMax) {
@@ -324,20 +324,20 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         // Try to locate face blob in thermal
         blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
-            int thermLeft = blobs[0].left;
-            int thermTop = blobs[0].top;
-            int thermRight = blobs[0].right;
-            int thermBot = blobs[0].bottom;
-            if (thermRight - thermLeft >= THERM_FACE_SIZE && thermBot - thermTop >= THERM_FACE_SIZE) {
+            int thermLeft = blobs[0].x;
+            int thermTop = blobs[0].y;
+            int thermWidth = blobs[0].width;
+            int thermHeight = blobs[0].height;
+            if (thermWidth >= THERM_FACE_SIZE && thermHeight >= THERM_FACE_SIZE) {
                 faceBlob.set_left(THERM_TO_VIS_X(thermLeft));
                 faceBlob.set_top(THERM_TO_VIS_Y(thermTop));
-                faceBlob.set_right(THERM_TO_VIS_X(thermRight));
-                faceBlob.set_bottom(THERM_TO_VIS_Y(thermBot));
+                faceBlob.set_right(THERM_TO_VIS_X(thermLeft + thermWidth - 1));
+                faceBlob.set_bottom(THERM_TO_VIS_Y(thermTop + thermHeight - 1));
                 dets.push_back(faceBlob);
                 nfaces = 1;
                 fprintf(stdout, "Visible Faces=%d\t%ld,%ld\t%lu,%lu\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
             } else {
-                fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermRight - thermLeft, thermBot - thermTop);
+                fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermWidth, thermHeight);
             }
         }
     } else if (nfaces > MAX_FACES) {

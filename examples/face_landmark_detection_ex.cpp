@@ -221,6 +221,16 @@ bool process_frame(imageattr_t& image)
 #define MAX_FACES       5
 #define MAX_BLOBS       5
 
+#define REF_INFLATE     2
+
+// Internal function to return [Blob] Sort Key
+static int32_t BlobSortByArea(seekrect_t* a, seekrect_t* b)
+{
+    int32_t area_a = a->width * a->height;
+    int32_t area_b = b->width * b->height;
+    return area_b - area_a;
+}
+
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t imageData[MAX_FACES])
 #else
@@ -294,7 +304,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     if (nfaces == 0) {
         seekrect_t blobs[MAX_BLOBS];
         // Detect reference black body in thermal
-        int blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
+        int blobCount = BlobRectF(thermbuf, NULL, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
             int thermLeft = blobs[0].x;
             int thermTop = blobs[0].y;
@@ -304,7 +314,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
             refRect.y = thermTop;
             refRect.width = thermWidth;
             refRect.height = thermHeight;
-            // Overwrite reference pixels with 25.0f (background)
+            // Find max & mean of reference Black Body
             float sum = 0.0;
             for (int y = thermTop; y < thermTop + thermHeight; ++y) {
                 for (int x = thermLeft; x < thermLeft + thermWidth; ++x) {
@@ -314,16 +324,43 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
                         refMax = temp;
                     }
                     sum += temp;
-                    thermbuf[index] = 25.0f;
+//                    thermbuf[index] = 20.0f;
                 }
             }
             // Calculate average black body temperature
             refMean = sum / (refRect.width * refRect.height);
+
             fprintf(stdout, "Reference Black Body=%d\t%d,%d\t%d,%d max=%0.2f mean=%0.2f\n", blobCount, refRect.x, refRect.y, refRect.width, refRect.height, refMax, refMean);
         }
+        // Inflate refRect by REF_INFLATE pixels (each side)
+        int refLeft = refRect.x;
+        int refTop = refRect.y;
+        int refWidth = refRect.width;
+        int refHeight = refRect.height;
+        seekrect_t excludeRect;
+
+        if (refLeft >= REF_INFLATE) {
+            refLeft -= REF_INFLATE;
+        }
+       if (refTop >= REF_INFLATE) {
+            refTop -= REF_INFLATE;
+        }
+        if (refLeft + refWidth + REF_INFLATE * 2 <= thermSize.width) {
+            refWidth += REF_INFLATE * 2;
+        }
+        if (refTop + refHeight + REF_INFLATE * 2 <= thermSize.height) {
+            refHeight += REF_INFLATE * 2;
+        }
+        excludeRect.x = refLeft;
+        excludeRect.y = refTop;
+        excludeRect.width = refWidth;
+        excludeRect.height = refHeight;
+
         // Try to locate face blob in thermal
-        blobCount = BlobRectF(thermbuf, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
+        blobCount = BlobRectF(thermbuf, &excludeRect, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
+            // Sort blobs by size (area)
+            BlobSort(blobs, BlobSortByArea, blobCount);
             int thermLeft = blobs[0].x;
             int thermTop = blobs[0].y;
             int thermWidth = blobs[0].width;

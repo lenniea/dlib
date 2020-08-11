@@ -30,12 +30,23 @@ static int CheckBlob(seekrect_t* pBlob, size_t count, int row, int left, int rig
     return 0;
 }
 
-// Internal 8-bit function to find start of Blob on a row
-static int StartBlobF(float* pRow, int col, int width, float thresh)
+static int PointInRect(const seekrect_t* rect, int row, int col) {
+    if (rect != NULL) {
+        int deltaX = col - rect->x;
+        int deltaY = row - rect->y;
+        return (deltaX >= 0 && deltaX < rect->width
+                && deltaY >= 0 && deltaY < rect->height);
+    }
+    return 0;
+}
+
+// Internal function to find start of Blob on a row
+static int StartBlobF(const float* image, const seekrect_t* excludeRect, int row, int col, int width, float thresh)
 {
+    const float* pRow = image + row * width;
     // Detect an edge in the row
     while (col < width) {
-        if (pRow[col] >= thresh) {
+        if (PointInRect(excludeRect, row, col) == 0 && pRow[col] >= thresh) {
             return col;
         }
         ++col;
@@ -43,12 +54,13 @@ static int StartBlobF(float* pRow, int col, int width, float thresh)
     return -1;
 }
 
-// Internal 8-bit function to find end of Blob on a row
-static int EndBlobF(float* pRow, int col, int width, float thresh)
+// Internal function to find end of Blob on a row
+static int EndBlobF(const float* image, const seekrect_t* excludeRect, int row, int col, int width, float thresh)
 {
+    const float* pRow = image + row * width;
     // Detect an edge in the row
     while (col < width) {
-        if (pRow[col] < thresh) {
+        if (PointInRect(excludeRect, row, col) || pRow[col] < thresh) {
             return col;
         }
         ++col;
@@ -57,15 +69,14 @@ static int EndBlobF(float* pRow, int col, int width, float thresh)
 }
 
 // Internal float function to scan row for for next blob starting at col
-static int ScanBlobF(float* image, int width, float thresh, int row, int col, int* startBlob)
+static int ScanBlobF(const float* image, const seekrect_t* excludeRect, int width, float thresh, int row, int col, int* startBlob)
 {
     // Scan for start of blob
-    float* pRow = image + row * width;
-    int start = StartBlobF(pRow, col, width, thresh);
+    int start = StartBlobF(image, excludeRect, row, col, width, thresh);
     if (start >= 0) {
         *startBlob = start;
         // Scan for end of blob
-        int endBlob = EndBlobF(pRow, *startBlob, width, thresh);
+        int endBlob = EndBlobF(image, excludeRect, row, *startBlob, width, thresh);
         return endBlob;
     }
     return -1;
@@ -85,19 +96,19 @@ static int ScanBlobF(float* image, int width, float thresh, int row, int col, in
  * 
  *  @return             Returns the number of Blobs detected or negative error code
  */
-int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrect_t* pBlob, int count)
+int STDCALL BlobRectF(const float* image, const seekrect_t* excludeRect, int width, int height, float thresh, seekrect_t* pBlob, int count)
 {
     int row;
     int blobCount = 0;
 
     for (row = 0; row < height; ++row) {
-        float* pRow = image + row * width;
+        const float* pRow = image + row * width;
 
         int startBlob, startBlobNext;
         int endBlob = 0;
         // Scan for 1st blob on next 2 rows
         for (;;) {
-            endBlob = ScanBlobF(image, width, thresh, row, endBlob, &startBlob);
+            endBlob = ScanBlobF(image, excludeRect, width, thresh, row, endBlob, &startBlob);
             if (endBlob < 0) {
                 break;
             }
@@ -109,14 +120,14 @@ int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrec
             int height = 1;
             int next = row + 1;
             for (;;) {
-                endBlobNext = ScanBlobF(image, width, thresh, next, endBlobNext, &startBlobNext);
+                endBlobNext = ScanBlobF(image, excludeRect, width, thresh, next, endBlobNext, &startBlobNext);
                 if (endBlobNext < 0) {
                     int blobWidth = endBlob - startBlob;
                     if (blobCount < count && height > BLOB_MIN && blobWidth >= BLOB_MIN) {
                         pBlob[blobCount].x = startBlob;
                         pBlob[blobCount].y = row;
                         pBlob[blobCount].width = endBlob - startBlob + 1;
-                        pBlob[blobCount].height = height;
+                        pBlob[blobCount].height = height + 1;
                         ++blobCount;
                     }
                     break;
@@ -140,14 +151,6 @@ int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrec
     return blobCount;
 }
 
-// Internal function to return [Blob] Sort Key
-static uint32_t SortKey(seekrect_t* pRect)
-{
-    int x = (pRect->x + pRect->width);           // drop bottom 3-bits for sorting
-    int y = (pRect->y + pRect->height) >> 4;      // drop bottom 3-bits for sorting
-    return x + (y << 16);
-}
-
 /**
  *  @brief  Sort Blobs
  *
@@ -158,7 +161,7 @@ static uint32_t SortKey(seekrect_t* pRect)
  */
 #define COPY_SEEK_RECT(a,b)  { (a)->x = (b)->x; (a)->y = (b)->y; (a)->width = (b)->width; (a)->height = (b)->height; }
 
-void STDCALL BlobSort(seekrect_t* pRect, int count)
+void STDCALL BlobSort(seekrect_t* pRect, BlobCompare func, int count)
 {
     // Dumb bubble sort for now...
     for (int i = 0; i < count - 1; ++i)
@@ -167,9 +170,7 @@ void STDCALL BlobSort(seekrect_t* pRect, int count)
         for (int j = i + 1; j < count; ++j)
         {
             seekrect_t* pRight = pRect + j;
-            uint32_t left = SortKey(pLeft);
-            uint32_t right = SortKey(pRight);
-            if (left > right) {
+            if (func(pLeft, pRight) > 0) {
                 seekrect_t temp;
                 COPY_SEEK_RECT(&temp, pLeft);
                 COPY_SEEK_RECT(pLeft, pRight);

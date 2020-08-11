@@ -23,9 +23,11 @@ typedef enum blob_status
     BLOB_NONE = 0,
 } BLOB_STATUS;
 
-int STDCALL BlobRectF(float* image, int width, int height, float thresh, seekrect_t* pBlob, int count);
+int STDCALL BlobRectF(const float* image, const seekrect_t* excludeRect, int width, int height, float thresh, seekrect_t* pBlob, int count);
 
-void STDCALL BlobSort(seekrect_t* pRect, int count);
+typedef int32_t BlobCompare(seekrect_t* a, seekrect_t* b);
+
+void STDCALL BlobSort(seekrect_t* pRect, BlobCompare func, int count);
 
 #ifdef DEBUG
     void DumpBlobs(seekrect_t* pBlob, int result);

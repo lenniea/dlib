@@ -139,11 +139,11 @@ size_t widthFromPixels(size_t pixels)
 {
     switch (pixels) {
     case 103 * 78:
-        SCALE = SCALE_8K;
+        SCALE = shrink_image ? SCALE_8K / 2 : SCALE_8K;
         THERM_FACE_SIZE = THERM_FACE_SIZE_8K;
         return 103;
     case 206 * 156:
-        SCALE = SCALE_32K;
+        SCALE = shrink_image ? SCALE_32K / 2 : SCALE_32K;
         THERM_FACE_SIZE = THERM_FACE_SIZE_32K;
         return 206;
     case 320 * 240:

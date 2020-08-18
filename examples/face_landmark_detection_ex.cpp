@@ -338,15 +338,14 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
     struct timespec start_time, end_time;
-    std::vector<std::pair<double, rectangle> > final_dets;
-    size_t nfaces;
-    uint32_t faceTime;
+    
     double adjust = -0.5;
+    std::vector<std::pair<double, rectangle> > final_dets;
     CLOCK_GETTIME(&start_time);
     detector(img, final_dets, adjust);
     CLOCK_GETTIME(&end_time);
-    faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
-    nfaces = final_dets.size();
+    uint32_t faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+    size_t nfaces = final_dets.size();
     size_t best_face = 0;
     double best_conf = 0.0;
     // Find face with highest confidence level

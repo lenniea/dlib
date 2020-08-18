@@ -80,8 +80,13 @@ using namespace std;
 
 typedef struct imageattr_t
 {
+    seekrect_t refRect;
+    float refMax;
+    float refMean;
+
     uint32_t faceTime;
     seekrect_t faceRect;
+
     uint32_t shapeTime;
     seekpoint_t leftOuter;
     seekpoint_t leftInner;
@@ -231,6 +236,31 @@ static int32_t BlobSortByArea(seekrect_t* a, seekrect_t* b)
     return area_b - area_a;
 }
 
+void inflateThermRect(seekrect_t& rect, int inflate) {
+    // Inflate refRect by REF_INFLATE pixels (each side)
+    int refLeft = rect.x;
+    int refTop = rect.y;
+    int refWidth = rect.width;
+    int refHeight = rect.height;
+
+    if (refLeft >= inflate) {
+        refLeft -= inflate;
+    }
+    if (refTop >= inflate) {
+        refTop -= inflate;
+    }
+    if (refLeft + refWidth + inflate * 2 <= thermSize.width) {
+        refWidth += inflate * 2;
+    }
+    if (refTop + refHeight + inflate * 2 <= thermSize.height) {
+        refHeight += inflate * 2;
+    }
+    rect.x = refLeft;
+    rect.y = refTop;
+    rect.width = refWidth;
+    rect.height = refHeight;
+}
+
 #ifdef SHOW_GUI
 extern "C" int find_face(image_window& win, frontal_face_detector & detector, shape_predictor & sp, const char* filename, imageattr_t& image)
 #else
@@ -268,7 +298,42 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         }
         n = atoi(ptr);
     }
+    rectangle faceBlob;
+    image.refRect.x = image.refRect.y = 0;
+    image.refRect.width = image.refRect.height = 0;
+    image.refMean = 0.0f;
+    image.refMax = -273.15;
+
     size_t therm_width = read_therm_frame(n, thermbuf, thermSize);
+    if (therm_width > 0) {
+        seekrect_t blobs[MAX_BLOBS];
+        // Detect reference black body in thermal
+        int blobCount = BlobRectF(thermbuf, NULL, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
+        if (blobCount > 0) {
+            int thermLeft = blobs[0].x;
+            int thermTop = blobs[0].y;
+            int thermWidth = blobs[0].width;
+            int thermHeight = blobs[0].height;
+            image.refRect.x = thermLeft;
+            image.refRect.y = thermTop;
+            image.refRect.width = thermWidth;
+            image.refRect.height = thermHeight;
+            // Find max & mean of reference Black Body
+            float sum = 0.0;
+            for (int y = thermTop; y < thermTop + thermHeight; ++y) {
+                for (int x = thermLeft; x < thermLeft + thermWidth; ++x) {
+                    int index = y * thermSize.width + x;
+                    float temp = thermbuf[index];
+                    if (temp > image.refMax) {
+                        image.refMax = temp;
+                    }
+                    sum += temp;
+                }
+            }
+            // Calculate average black body temperature
+            image.refMean = sum / (image.refRect.width * image.refRect.height);
+        }
+    }
 
     // Now tell the face detector to give us a list of bounding boxes
     // around all the faces in the image.
@@ -283,15 +348,20 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     faceTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
     nfaces = final_dets.size();
     size_t best_face = 0;
-    double best_conf = final_dets[best_face].first;
+    double best_conf = 0.0;
     // Find face with highest confidence level
-    for (size_t u = 1; u < nfaces; ++u) {
+    for (size_t u = 0; u < nfaces; ++u) {
         double confidence = final_dets[u].first;
         if (confidence > best_conf) {
             best_face = u;
             best_conf = confidence;
         }
     }
+#ifdef SHOW_GUI
+    // Now let's view our image on the screen.
+    win.clear_overlay();
+    win.set_image(img);
+#endif
 
     cout << setprecision(2) << fixed;
     cout << "Number of faces detected: " << nfaces << " best[" << best_face << "]=" << best_conf << endl;
@@ -300,67 +370,14 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     // Now we will go ask the shape_predictor to tell us the pose of
     // each face we detected.
     std::vector<full_object_detection> shapes;
-    rectangle faceBlob;
-    seekrect_t refRect;
-    float refMean =0.0f;
-    float refMax = -273.15;
     if (nfaces == 0) {
-        seekrect_t blobs[MAX_BLOBS];
-        // Detect reference black body in thermal
-        int blobCount = BlobRectF(thermbuf, NULL, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
-        if (blobCount > 0) {
-            int thermLeft = blobs[0].x;
-            int thermTop = blobs[0].y;
-            int thermWidth = blobs[0].width;
-            int thermHeight = blobs[0].height;
-            refRect.x = thermLeft;
-            refRect.y = thermTop;
-            refRect.width = thermWidth;
-            refRect.height = thermHeight;
-            // Find max & mean of reference Black Body
-            float sum = 0.0;
-            for (int y = thermTop; y < thermTop + thermHeight; ++y) {
-                for (int x = thermLeft; x < thermLeft + thermWidth; ++x) {
-                    int index = y * thermSize.width + x;
-                    float temp = thermbuf[index];
-                    if (temp > refMax) {
-                        refMax = temp;
-                    }
-                    sum += temp;
-//                    thermbuf[index] = 20.0f;
-                }
-            }
-            // Calculate average black body temperature
-            refMean = sum / (refRect.width * refRect.height);
-
-            fprintf(stdout, "Reference Black Body=%d\t%d,%d\t%d,%d max=%0.2f mean=%0.2f\n", blobCount, refRect.x, refRect.y, refRect.width, refRect.height, refMax, refMean);
-        }
-        // Inflate refRect by REF_INFLATE pixels (each side)
-        int refLeft = refRect.x;
-        int refTop = refRect.y;
-        int refWidth = refRect.width;
-        int refHeight = refRect.height;
         seekrect_t excludeRect;
-
-        if (refLeft >= REF_INFLATE) {
-            refLeft -= REF_INFLATE;
-        }
-       if (refTop >= REF_INFLATE) {
-            refTop -= REF_INFLATE;
-        }
-        if (refLeft + refWidth + REF_INFLATE * 2 <= thermSize.width) {
-            refWidth += REF_INFLATE * 2;
-        }
-        if (refTop + refHeight + REF_INFLATE * 2 <= thermSize.height) {
-            refHeight += REF_INFLATE * 2;
-        }
-        excludeRect.x = refLeft;
-        excludeRect.y = refTop;
-        excludeRect.width = refWidth;
-        excludeRect.height = refHeight;
+        excludeRect = image.refRect;
+        inflateThermRect(excludeRect, REF_INFLATE);
 
         // Try to locate face blob in thermal
-        blobCount = BlobRectF(thermbuf, &excludeRect, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
+        seekrect_t blobs[MAX_BLOBS];
+        int blobCount = BlobRectF(thermbuf, &excludeRect, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
             // Sort blobs by size (area)
             BlobSort(blobs, BlobSortByArea, blobCount);
@@ -376,7 +393,8 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
                 final_dets.push_back(std::make_pair(0.0, faceBlob));
                 nfaces = 1;
                 fprintf(stdout, "Visible Faces=%d\t%ld,%ld\t%lu,%lu\n", blobCount, faceBlob.left(), faceBlob.top(), faceBlob.width(), faceBlob.height());
-            } else {
+            }
+            else {
                 fprintf(stdout, "FILTER Thermal Faces=%d\t%d,%d\t%d,%d\n", blobCount, thermLeft, thermTop, thermWidth, thermHeight);
             }
         }
@@ -385,52 +403,52 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
         nfaces = MAX_FACES;
     }
 
-    CLOCK_GETTIME(&start_time);
-    full_object_detection shape = sp(img, final_dets[best_face].second);
-    CLOCK_GETTIME(&end_time);
-    uint32_t shapeTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
+    if (nfaces > 0) {
 
-    // save best face rect in image
-    image.faceTime = faceTime / 1000;
-    image.shapeTime = shapeTime / 1000;
-    seekrect_t& rect = image.faceRect;
-    rect.x = final_dets[best_face].second.left();
-    rect.y = final_dets[best_face].second.right();
-    rect.width = final_dets[best_face].second.width();
-    rect.height = final_dets[best_face].second.height();
+        CLOCK_GETTIME(&start_time);
+        full_object_detection shape = sp(img, final_dets[best_face].second);
+        CLOCK_GETTIME(&end_time);
+        uint32_t shapeTime = (end_time.tv_nsec + 1000000000 - start_time.tv_nsec) % 1000000000;
 
-    int num_parts = shape.num_parts();
-    cout << "number of parts: " << num_parts << endl;
+        // save best face rect in image
+        image.faceTime = faceTime / 1000;
+        image.shapeTime = shapeTime / 1000;
+        seekrect_t& rect = image.faceRect;
+        rect.x = final_dets[best_face].second.left();
+        rect.y = final_dets[best_face].second.right();
+        rect.width = final_dets[best_face].second.width();
+        rect.height = final_dets[best_face].second.height();
 
-    if (num_parts >= 5) {
-        image.rightOuter.x = shape.part(0).x();
-        image.rightOuter.y = shape.part(0).y();
-        image.rightInner.x = shape.part(1).x();
-        image.rightInner.y = shape.part(1).y();
-        image.leftInner.x = shape.part(2).x();
-        image.leftInner.y = shape.part(2).y();
-        image.leftOuter.x = shape.part(3).x();
-        image.leftOuter.y = shape.part(3).y();
-        image.nose.x = shape.part(4).x();
-        image.nose.y = shape.part(4).y();
-    }
-    // You get the idea, you can get all the face part locations if
-    // you want them.  Here we just store them in shapes so we can
-    // put them on the screen.
-    shapes.push_back(shape);
+        int num_parts = shape.num_parts();
+        cout << "number of parts: " << num_parts << endl;
 
-    image.leftTemp = NAN;
-    image.rightTemp = NAN;
-    bool have_temp = process_frame(image);
+        if (num_parts >= 5) {
+            image.rightOuter.x = shape.part(0).x();
+            image.rightOuter.y = shape.part(0).y();
+            image.rightInner.x = shape.part(1).x();
+            image.rightInner.y = shape.part(1).y();
+            image.leftInner.x = shape.part(2).x();
+            image.leftInner.y = shape.part(2).y();
+            image.leftOuter.x = shape.part(3).x();
+            image.leftOuter.y = shape.part(3).y();
+            image.nose.x = shape.part(4).x();
+            image.nose.y = shape.part(4).y();
+        }
+        // You get the idea, you can get all the face part locations if
+        // you want them.  Here we just store them in shapes so we can
+        // put them on the screen.
+        shapes.push_back(shape);
+
+        image.leftTemp = NAN;
+        image.rightTemp = NAN;
+        bool have_temp = process_frame(image);
 #ifdef SHOW_GUI
-    // Now let's view our face poses on the screen.
-    win.clear_overlay();
-    win.set_image(img);
-    // Show face rectangle in RED
-    win.add_overlay(final_dets[best_face].second, rgb_pixel(255, 0, 0));
-    // Show face features in GREEN
-    win.add_overlay(render_face_detections(shapes));
+        // Show face rectangle in RED
+        win.add_overlay(final_dets[best_face].second, rgb_pixel(255, 0, 0));
+        // Show face features in GREEN
+        win.add_overlay(render_face_detections(shapes));
 #endif
+    }
 #ifdef DEBUG
     cout << "Hit enter to process the next image..." << endl;
     cin.get();
@@ -507,23 +525,23 @@ int main(int argc, char** argv)
 #else
             int nfaces = find_face(detector, sp, filename, visData);
 #endif
-            if (nfaces == 0) {
-                ostream << "0\t" << filename << endl;
-
-            } else {
+            // Always output filename, refRect, refMax
+            ostream << setprecision(2) << fixed;
+            ostream << "0\t" << filename << "\t" << image.refRect.x << "," << image.refRect.y << "\t" 
+                    << image.refRect.width << "," << image.refRect.height << "\t" << image.refMax;
+            if (nfaces > 0) {
                 seekrect_t& rect = image.faceRect;
-                ostream << 0 << "\t" << filename << "\t" << image.faceTime << "\t" <<
+                ostream << "\t" << image.faceTime << "\t" <<
                     rect.x << "," << rect.y << "\t" << rect.width << "," << rect.height << "\t" << image.shapeTime << "\t" <<
                     image.leftOuter.x << "," << image.leftOuter.y << "\t" << image.leftInner.x << "," << image.leftInner.y << "\t" <<
                     image.rightInner.x << "," << image.rightInner.y << "\t" << image.rightOuter.x << "," << image.rightOuter.y << "\t" <<
                     image.nose.x << "," << image.nose.y;
                 if (!isnan(image.leftTemp) && !isnan(image.rightTemp)) {
                     ostream << "\t" << image.leftThermal.x << "," << image.leftThermal.y << "\t" << image.rightThermal.x << "," << image.rightThermal.y;
-                    ostream << setprecision(2) << fixed;
                     ostream << "\t" << image.leftTemp << "," << image.rightTemp;
                 }
-                ostream << endl;
             }
+            ostream << endl;
         }
         ostream.close();
     }

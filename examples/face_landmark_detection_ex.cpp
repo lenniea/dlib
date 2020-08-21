@@ -134,10 +134,6 @@ int THERM_FACE_SIZE = THERM_FACE_SIZE_8K;
 
 char folder[MAX_PATH];
 
-#define THERM_MAX_PIXELS		(THERM_MAX_ROWS * THERM_MAX_COLS)
-float thermbuf[THERM_MAX_PIXELS];
-seeksize_t thermSize;
-
 int diameter = 2;
 
 size_t widthFromPixels(size_t pixels)
@@ -157,18 +153,18 @@ size_t widthFromPixels(size_t pixels)
     return 0;
 }
 
-float findCanthus(float* thermbuf, seeksize_t frameSize, int xCenter, int yCenter)
+float findCanthus(array2d<float>& therm_image, int xCenter, int yCenter)
 {
     int xMax = xCenter;
     int yMax = yCenter;
-    float maxTemp = thermbuf[xMax + yMax * frameSize.width];
+    float maxTemp = therm_image[yMax][xMax];
     for (int yoff = 0; yoff < diameter; ++yoff) {
         int y = yCenter + yoff;
-        if (y < frameSize.height) {
+        if (y < therm_image.nr()) {
             for (int xoff = 0; xoff < diameter; ++xoff) {
                 int x = xCenter + xoff;
-                if (x < frameSize.width) {
-                    float temp = thermbuf[x + y * frameSize.width];
+                if (x < therm_image.nc()) {
+                    float temp = therm_image[yMax][xMax];
                     if (temp > maxTemp) {
                         xMax = x;
                         yMax = y;
@@ -182,27 +178,30 @@ float findCanthus(float* thermbuf, seeksize_t frameSize, int xCenter, int yCente
     return maxTemp;
 }
 
-size_t read_therm_frame(int n, float* thermbuf, seeksize_t& frame_size)
+size_t read_therm_image(const char* pathname, array2d<float>& image)
 {
-    char pathname[MAX_PATH];
-    sprintf(pathname, "Therm%04d.bin", n);
-    frame_size.width = frame_size.height = -1;
     FILE* fp = fopen(pathname, "rb");
     if (fp == NULL) {
         fprintf(stderr, "ERROR opening file %s!\n", pathname);
         return 0;
     }
-    size_t nread = fread(thermbuf, sizeof(float), THERM_MAX_PIXELS, fp);
-    fclose(fp);
-    size_t width = widthFromPixels(nread);
+    // Get size of file in bytes
+    fseek(fp, 0L, SEEK_END);
+    size_t nbytes = ftell(fp);
+    fseek(fp, 0L, SEEK_SET);
+    size_t npixels = nbytes / sizeof(float);
+    int width = widthFromPixels(npixels);
     if (width > 0) {
-        frame_size.height = nread / width;
-        frame_size.width = width;
+        int height = npixels / width;
+        image.set_size(height, width);
+        /// Read pixels into data buffer
+        size_t nread = fread((void*) &image[0][0], sizeof(float), npixels, fp);
     }
+    fclose(fp);
     return width;
 }
 
-bool process_frame(imageattr_t& image)
+bool process_frame(imageattr_t& image, array2d<float>& therm_image)
 {
     int leftX = VIS_TO_THERM_X(image.leftInner.x);
     int leftY = VIS_TO_THERM_Y(image.leftInner.y);
@@ -211,13 +210,13 @@ bool process_frame(imageattr_t& image)
     bool result = false;
     image.leftTemp = NAN;
     image.rightTemp = NAN;
-    if (thermSize.width > 0 && thermSize.height > 0) {
+    if (therm_image.nc() > 0 && therm_image.nr() > 0) {
         image.leftThermal.x = leftX;
         image.leftThermal.y = leftY;
         image.rightThermal.x = rightX;
         image.rightThermal.y = rightY;
-        image.leftTemp = findCanthus(thermbuf, thermSize, leftX, leftY);
-        image.rightTemp = findCanthus(thermbuf, thermSize, rightX - diameter, rightY);
+        image.leftTemp = findCanthus(therm_image, leftX, leftY);
+        image.rightTemp = findCanthus(therm_image, rightX - diameter, rightY);
         result = true;
     }
     return result;
@@ -236,7 +235,7 @@ static int32_t BlobSortByArea(seekrect_t* a, seekrect_t* b)
     return area_b - area_a;
 }
 
-void inflateThermRect(seekrect_t& rect, int inflate) {
+void inflateThermRect(seekrect_t& rect, int inflate, int width, int height) {
     // Inflate refRect by REF_INFLATE pixels (each side)
     int refLeft = rect.x;
     int refTop = rect.y;
@@ -249,10 +248,10 @@ void inflateThermRect(seekrect_t& rect, int inflate) {
     if (refTop >= inflate) {
         refTop -= inflate;
     }
-    if (refLeft + refWidth + inflate * 2 <= thermSize.width) {
+    if (refLeft + refWidth + inflate * 2 <= width) {
         refWidth += inflate * 2;
     }
-    if (refTop + refHeight + inflate * 2 <= thermSize.height) {
+    if (refTop + refHeight + inflate * 2 <= height) {
         refHeight += inflate * 2;
     }
     rect.x = refLeft;
@@ -304,11 +303,15 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     image.refMean = 0.0f;
     image.refMax = -273.15;
 
-    size_t therm_width = read_therm_frame(n, thermbuf, thermSize);
+    array2d<float> therm_image;
+
+    char pathname[MAX_PATH];
+    sprintf(pathname, "Therm%04d.bin", n);
+    size_t therm_width = read_therm_image(pathname, therm_image);
     if (therm_width > 0) {
         seekrect_t blobs[MAX_BLOBS];
         // Detect reference black body in thermal
-        int blobCount = BlobRectF(thermbuf, NULL, thermSize.width, thermSize.height, 35.0f, blobs, MAX_BLOBS);
+        int blobCount = BlobRectF(&therm_image[0][0], NULL, therm_image.nc(), therm_image.nr(), 35.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
             int thermLeft = blobs[0].x;
             int thermTop = blobs[0].y;
@@ -322,8 +325,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
             float sum = 0.0;
             for (int y = thermTop; y < thermTop + thermHeight; ++y) {
                 for (int x = thermLeft; x < thermLeft + thermWidth; ++x) {
-                    int index = y * thermSize.width + x;
-                    float temp = thermbuf[index];
+                    float temp = therm_image[y][x];
                     if (temp > image.refMax) {
                         image.refMax = temp;
                     }
@@ -372,11 +374,11 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
     if (nfaces == 0) {
         seekrect_t excludeRect;
         excludeRect = image.refRect;
-        inflateThermRect(excludeRect, REF_INFLATE);
+        inflateThermRect(excludeRect, REF_INFLATE, therm_image.nc(), therm_image.nr());
 
         // Try to locate face blob in thermal
         seekrect_t blobs[MAX_BLOBS];
-        int blobCount = BlobRectF(thermbuf, &excludeRect, thermSize.width, thermSize.height, 30.0f, blobs, MAX_BLOBS);
+        int blobCount = BlobRectF(&therm_image[0][0], &excludeRect, therm_image.nc(), therm_image.nr(), 30.0f, blobs, MAX_BLOBS);
         if (blobCount > 0) {
             // Sort blobs by size (area)
             BlobSort(blobs, BlobSortByArea, blobCount);
@@ -440,7 +442,7 @@ extern "C" int find_face(frontal_face_detector& detector, shape_predictor& sp, c
 
         image.leftTemp = NAN;
         image.rightTemp = NAN;
-        bool have_temp = process_frame(image);
+        bool have_temp = process_frame(image, therm_image);
 #ifdef SHOW_GUI
         // Show face rectangle in RED
         win.add_overlay(final_dets[best_face].second, rgb_pixel(255, 0, 0));
